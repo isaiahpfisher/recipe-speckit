@@ -144,6 +144,15 @@ Mount prefix: `/recipeapi` (see `IngredientServices` / `ingredient.routes.js`).
 
 **Create validation:** `name`, `unit`, and `pricePerUnit` MUST NOT be `undefined` (**FR-002**–**FR-004**). Errors use `{ "message": "…" }`.
 
+**Update request body** (name, unit, and/or price may change):
+```json
+{
+  "name": "Peanut Butter",
+  "unit": "ounce",
+  "pricePerUnit": 0.23
+}
+```
+
 **Update success** (`200`):
 ```json
 {
@@ -168,7 +177,7 @@ Mount prefix: `/recipeapi` (see `IngredientServices` / `ingredient.routes.js`).
 *   **Row display:** name; unit; price as `$` + `pricePerUnit` (e.g. `$0.07`); Actions column shows a pencil **edit** icon (`mdi-pencil`) that opens the edit dialog (US-2.3, US-2.4).
 *   **Empty list:** table headers still show (Name, Unit, Price Per Unit, Actions); body has no rows (US-2.2).
 *   **Add dialog** (title **Add Ingredient**): fields **Name** (text), **Unit** (select), **Price Per Unit** (number). Unit options: `cup`, `gallon`, `gram`, `kilogram`, `liter`, `milliliter`, `ounce`, `pint`, `piece`, `pound`, `quart`, `tablespoon`, `teaspoon`, `unit`. Actions: **Close**, **Add Ingredient**.
-*   **Edit dialog** (title **Edit Ingredient**): same fields prefilled from the row. Actions: **Close**, **Update Ingredient**.
+*   **Edit dialog** (title **Edit Ingredient**): same fields prefilled from the row. Actions: **Close**, **Update Ingredient**. After a successful update, the row refreshes the changed name, unit, and price (for example `ounce` instead of `gallon`, and `$0.23` instead of `$4.00`).
 *   **Loading / error:** failures surface via snackbar using the API `message` when present.
 
 **App chrome**
@@ -265,6 +274,24 @@ Mount prefix: `/recipeapi` (see `IngredientServices` / `ingredient.routes.js`).
 *   **Then** the API returns `200` with the message: "Ingredient was updated successfully."
 *   **And** the ingredients view shows `Jelly` instead of `Peanut Butter`
 
+#### Scenario: User changes ingredient unit
+*   **Given** I am signed in
+*   **And** There is an ingredient named `Peanut Butter` with unit `gallon`
+*   **When** I click the edit icon on the `Peanut Butter` row
+*   **And** I change the unit to `ounce` in the edit dialog
+*   **And** I click `Update Ingredient`
+*   **Then** the API returns `200` with the message: "Ingredient was updated successfully."
+*   **And** the ingredients view shows `ounce` as the unit instead of `gallon`
+
+#### Scenario: User changes ingredient price
+*   **Given** I am signed in
+*   **And** There is an ingredient named `Peanut Butter` with price `4.00`
+*   **When** I click the edit icon on the `Peanut Butter` row
+*   **And** I change the price to `0.23` in the edit dialog
+*   **And** I click `Update Ingredient`
+*   **Then** the API returns `200` with the message: "Ingredient was updated successfully."
+*   **And** the ingredients view shows `$0.23` as the price instead of `$4.00`
+
 ---
 
 ### US-2.6 — Private access to create and edit ingredients only
@@ -299,6 +326,10 @@ Each scenario above must map to at least one automated test.
 | US-2.4 | Ingredient rows show correct columns | `frontend/tests/IngredientList.test.js` | `Ingredient rows show correct columns` |
 | US-2.5 | User renames an ingredient | `backend/tests/ingredients.test.js` | `User renames an ingredient` |
 | US-2.5 | User renames an ingredient | `frontend/tests/IngredientList.test.js` | `User renames an ingredient` |
+| US-2.5 | User changes ingredient unit | `backend/tests/ingredients.test.js` | `User changes ingredient unit` |
+| US-2.5 | User changes ingredient unit | `frontend/tests/IngredientList.test.js` | `User changes ingredient unit` |
+| US-2.5 | User changes ingredient price | `backend/tests/ingredients.test.js` | `User changes ingredient price` |
+| US-2.5 | User changes ingredient price | `frontend/tests/IngredientList.test.js` | `User changes ingredient price` |
 | US-2.6 | Unauthenticated user accesses the ingredients page | `frontend/tests/IngredientList.test.js` | `Unauthenticated user accesses the ingredients page` |
 | US-2.6 | Unauthenticated API request to update ingredient | `backend/tests/ingredients.test.js` | `Unauthenticated API request to update ingredient` |
 | US-2.6 | Unauthenticated API request to update ingredient | `frontend/tests/IngredientList.test.js` | `Unauthenticated API request to update ingredient` |
