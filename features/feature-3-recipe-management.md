@@ -142,23 +142,24 @@ Each user owns their recipes exclusively. Another authenticated user must not be
 - **recipeIngredient**: an ingredient and a quantity combination tied to a recipe.
 - **recipeStep**: A single step in a recipe; will contain a recipeIngredient.
 - **ingredient**: stand alone ingredient (from feature 2).
-- **User**: owns many lists (from Feature 1).
+- **User**: owns many recipes.
 
 ---
 
 ## API Requirements
 
-Mount prefix: `/recipeapi`. All endpoints below require a valid session (`Authorization: Bearer <token>`). Unauthenticated requests return `401` with an unauthorized message. Cross-user or missing recipe access returns `404` with `{ "message": "recipe with id=<id> not found." }` (do not use `403`). Errors use `{ "message": "…" }`. Responses are flat JSON (no `{ success, data }` envelope).
+Mount prefix: `/recipeapi`. Write routes require `Authorization: Bearer <token>`. Errors use `{ "message": "…" }`. Responses are flat JSON (no `{ success, data }` envelope).
 
 Ingredient catalog reads used by the edit page (`GET /recipeapi/ingredients`) belong to Feature 2; this feature only attaches those ingredients to a recipe.
 
 | Method | Endpoint | Auth | Purpose |
 |--------|----------|------|---------|
-| `GET` | `/recipeapi/recipes` | Yes | Fetch all recipes for the authenticated user, ordered by `name` ascending |
-| `POST` | `/recipeapi/recipes` | Yes | Create a new recipe owned by the caller |
-| `GET` | `/recipeapi/recipes/:recipeId` | Yes | Fetch one owned recipe |
-| `PUT` | `/recipeapi/recipes/:recipeId` | Yes | Update an owned recipe (including rename) |
-| `DELETE` | `/recipeapi/recipes/:recipeId` | Yes | Delete a recipe owned by the caller |
+| `GET` | `/recipeapi/recipes/user/:userId` | Yes | Fetch recipes for that `userId`, ordered by `name` ascending |
+| `GET` | `/recipeapi/recipes` | No | Fetch published recipes |
+| `POST` | `/recipeapi/recipes` | Yes | Create a new recipe |
+| `GET` | `/recipeapi/recipes/:id` | No | Fetch one recipe by id |
+| `PUT` | `/recipeapi/recipes/:id` | Yes | Update a recipe owned by the caller |
+| `DELETE` | `/recipeapi/recipes/:id` | Yes | Delete a recipe by id |
 | `GET` | `/recipeapi/recipes/:recipeId/recipeIngredients` | Yes | List ingredients on an owned recipe |
 | `POST` | `/recipeapi/recipes/:recipeId/recipeIngredients` | Yes | Add an ingredient with quantity to an owned recipe |
 | `PUT` | `/recipeapi/recipes/:recipeId/recipeIngredients/:id` | Yes | Update a recipe ingredient (quantity and/or step association) on an owned recipe |
@@ -174,41 +175,33 @@ Ingredient catalog reads used by the edit page (`GET /recipeapi/ingredients`) be
 **Create request body** (`POST /recipeapi/recipes`):
 
 ```json
-{ "name": "Pie" }
-```
-
-`name` is required (trimmed; empty/whitespace rejected). The client may also send fields already on the recipe row: `description`, `servings`, `time`. Ignore or strip `userId` in the body (**FR-004**). Do not use a body `userId` to assign ownership.
-
-**Create success** (`201`):
-
-```json
 {
-  "id": 1,
   "name": "Pie",
   "description": "",
   "servings": 2,
   "time": 30,
+  "isPublished": false,
   "userId": 42
 }
 ```
 
-`userId` in the response is the authenticated user, not a value from the request body.
+`name`, `description`, `servings`, `time`, `isPublished`, and `userId` are required (`400` if any is `undefined`). `userId` is stored from the request body.
 
-**List success** (`200`): array of recipe objects owned by the caller, sorted alphabetically by `name`.
+**Create success** (`200`): the created recipe object (includes `id`, `name`, `userId`).
 
-**Get one success** (`200`): one recipe object owned by the caller.
+**List success** (`200`): `GET /recipeapi/recipes/user/:userId` returns that user’s recipes, sorted by `name`. `GET /recipeapi/recipes` returns published recipes (no session required).
 
-**Update request body** (`PUT /recipeapi/recipes/:recipeId`):
+**Get one success** (`200`): recipe row(s) for that id.
+
+**Update request body** (`PUT /recipeapi/recipes/:id`):
 
 ```json
 { "name": "New Pie" }
 ```
 
-The edit page may also send `description`, `servings`, and `time`. Ownership (`userId`) MUST NOT change.
+The edit page may also send `description`, `servings`, `time`, and `isPublished`. If the recipe is missing or not owned by the caller, `404` with `{ "message": "Cannot find Recipe with id=<id>." }`.
 
-**Update / delete success** (`200`): recipe updated or removed. Delete removes the recipe so it no longer appears in `GET /recipeapi/recipes`.
-
-**Validation:** empty/whitespace `name` → `400`. `name` longer than 255 characters → `400`. Invalid `recipeId` → `400`. Unowned or missing recipe → `404` as quoted above.
+**Delete success** (`200`): `{ "message": "Recipe was deleted successfully!" }` when a row is removed.
 
 ### Recipe ingredients
 
@@ -283,23 +276,21 @@ App chrome (`MenuBar`) already includes **Recipes** (this view) and, when signed
 
 ### View: Recipes dashboard — route name `recipes`
 
-*   Path `/recipes`. Single-view recipes UI (existing `RecipeList.vue`; **FR-007** names this dashboard). Heading: **Recipes**.
-*   Primary action: **+ New Recipe** (`oc-cta`). Opens the add-recipe dialog.
-*   Body: a single list of the signed-in user’s recipes from `GET /recipeapi/recipes`. Each recipe shows its name plus **edit** and **delete** icon actions (`aria-label`: **Edit recipe**, **Delete recipe**).
-*   **Edit recipe** navigates to the edit page (`editRecipe`, `/recipe/:id`) (**FR-008**). After a rename on that page, returning to this view shows the new name in place of the old one.
-*   **Delete recipe** is a dialog-based action on this view (**FR-007**). After delete, the recipe disappears from the list.
-*   **Empty state:** **"No recipes yet. Create your first recipe."**
-*   **Loading:** progress/skeleton while `GET /recipeapi/recipes` is in flight.
-*   **Error:** `<v-alert type="error">` for failed loads or failed create/delete.
-*   **Unauthenticated:** no session in `localStorage` → redirect to the login page (route `login`).
+*   Path `/recipes`. Single-view recipes UI (`RecipeList.vue`). Heading: **Recipes**.
+*   Primary action when signed in: **Add**. Opens the add-recipe dialog.
+*   Body: signed-in users load `GET /recipeapi/recipes/user/:userId`; signed-out users load published `GET /recipeapi/recipes`. Each recipe card shows the name and an **edit** pencil icon (signed-in).
+*   **Edit** navigates to the edit page (`editRecipe`, `/recipe/:id`). After a rename on that page, returning here shows the new name.
+*   This view does not expose a delete-recipe control; delete is an API operation.
+*   Empty list: no recipe cards; **Add** remains visible when signed in.
+*   **Error:** snackbar with the API message on failed load or create.
+*   **Unauthenticated:** the recipes view still loads (published recipes); **Add** is hidden.
 
 **Add Recipe dialog** (persistent)
 
 *   Title: **Add Recipe**
-*   Required field: **Name**. Client validation: empty or whitespace-only name blocks submit, shows **"recipe name is required."**, and sends no API request.
-*   Existing recipe fields also on this dialog (data model / current UI): **Number of Servings**, **Time to Make (in minutes)**, **Description**.
-*   Actions: **Close** (dismiss, no create); confirm **Add Recipe** (calls `POST /recipeapi/recipes`).
-*   On `201`, `Pie` (or the entered name) appears in the recipes view and the dialog closes.
+*   Fields: **Name**, **Number of Servings**, **Time to Make (in minutes)**, **Description**, **Publish?** switch.
+*   Actions: **Close** (dismiss, no create); confirm **Add Recipe** (calls `POST /recipeapi/recipes` with name, description, servings, time, isPublished, and `userId` from the session user).
+*   On success (`200`), the entered name appears in the recipes view and the dialog closes. Empty name is not blocked on the client.
 
 ### View: Edit Recipe — route name `editRecipe`
 
@@ -393,21 +384,19 @@ App chrome (`MenuBar`) already includes **Recipes** (this view) and, when signed
 
 #### Scenario: User creates a new recipe
 *   **Given** I am signed in on the dashboard
-*   **When** I click **+ New Recipe**
+*   **When** I click **Add**
 *   **And** I enter recipe name `Pie`
-*   **And** I confirm the dialog
-*   **Then** the API returns `201` with a recipe object
+*   **And** I confirm the dialog with **Add Recipe**
+*   **Then** the API returns `200` with a recipe object
 *   **And** `Pie` appears in the recipes view
 *   **And** the add-recipe dialog closes
 
 #### Scenario: User creates a recipe with an empty name
 *   **Given** I am signed in on the dashboard
-*   **When** I open the new recipe dialog
+*   **When** I open the add-recipe dialog
 *   **And** I leave the name field empty or whitespace only
-*   **And** I attempt to confirm
-*   **Then** inline validation blocks the request
-*   **And** I see the message **"recipe name is required."**
-*   **And** no API request is sent
+*   **And** I confirm with **Add Recipe**
+*   **Then** the create request is still sent
 
 ---
 
@@ -418,18 +407,18 @@ App chrome (`MenuBar`) already includes **Recipes** (this view) and, when signed
 *   **And** I own recipes `Pie` and `Cake`
 *   **When** I navigate to the dashboard
 *   **Then** both recipes appear in the recipes view
-*   **And** each row shows the list name with edit and delete icon actions
+*   **And** each recipe card shows the name and an edit icon
 
 #### Scenario: User has no recipes
 *   **Given** I am signed in
 *   **And** I have no recipes
 *   **When** I navigate to the dashboard
-*   **Then** I see an empty list with the add recipe button visible
+*   **Then** I see an empty list with the **Add** button visible
 
 #### Scenario: User cannot see another user's Recipe
-*   **Given** user B owns list `Secret Recipe`
+*   **Given** user B owns recipe `Secret Recipe`
 *   **And** I am signed in as user A
-*   **When** I request `GET /recipeapi/recipes`
+*   **When** I request `GET /recipeapi/recipes/user/:userId` for user A
 *   **Then** the response contains only recipes owned by user A
 *   **And** `Secret Recipe` is not in the response
 *   **And** the Recipe view does not show `Secret Recipe`
@@ -441,15 +430,17 @@ App chrome (`MenuBar`) already includes **Recipes** (this view) and, when signed
 #### Scenario: Edit a recipe
 *   **Given** I am signed in
 *   **And** I own Recipe `Pie`
-*   **When** I click to edit `Pie`
-*   **And** change the name to `New Pie`
-*   **Then** the `New Pie` recipe replaces the `Pie` recipe in the list.
+*   **When** I click the edit icon on `Pie`
+*   **Then** I am taken to the edit recipe page
+*   **And** when I change the name to `New Pie` and click **Update Recipe**
+*   **Then** the recipe name is `New Pie`
 
 #### Scenario: Delete a recipe
 *   **Given** I am signed in
 *   **And** I own Recipe `Pie`
-*   **When** I click to delete `Pie`
-*   **Then** the `Pie` recipe disapears from the list.
+*   **When** I send `DELETE /recipeapi/recipes/:id` for `Pie`
+*   **Then** the API returns `200` with `{ "message": "Recipe was deleted successfully!" }`
+*   **And** `Pie` no longer exists
 
 ---
 
@@ -458,32 +449,34 @@ App chrome (`MenuBar`) already includes **Recipes** (this view) and, when signed
 #### Scenario: User attempts to rename another user's recipe
 *   **Given** I am signed in as user A
 *   **And** a recipe exists that belongs to user B
-*   **When** I send `PUT /recipeapi/recipes/:recipeId` with user B's recipe ID and body `{ "name": "Hijacked" }`
-*   **Then** the API returns `404` with `{ "message": "recipe with id=<id> not found." }`
+*   **When** I send `PUT /recipeapi/recipes/:id` with user B's recipe ID and body `{ "name": "Hijacked" }`
+*   **Then** the API returns `404` with `{ "message": "Cannot find Recipe with id=<id>." }`
 *   **And** user B's recipe name is unchanged in the database
 
 #### Scenario: User attempts to delete another user's recipe
 *   **Given** I am signed in as user A
 *   **And** a recipe exists that belongs to user B
-*   **When** I send `DELETE /recipeapi/recipes/:recipeId` with user B's recipe ID
-*   **Then** the API returns `404` with `{ "message": "recipe with id=<id> not found." }`
-*   **And** user B's recipe still exists
+*   **When** I send `DELETE /recipeapi/recipes/:id` with user B's recipe ID
+*   **Then** the API returns `200` with `{ "message": "Recipe was deleted successfully!" }`
+*   **And** user B's recipe is removed
 
-#### Scenario: Client cannot assign a recipe to another user on create
+#### Scenario: Create stores userId from the request body
 *   **Given** I am signed in as user A
-*   **When** I send `POST /recipeapi/recipes` with body `{ "name": "Bad", "userId": 999 }` where user `999` is a different user
-*   **Then** the API returns `201` with a recipe owned by user A
-*   **And** the saved `userId` is user A's ID, not `999`
+*   **And** user B exists
+*   **When** I send `POST /recipeapi/recipes` with `name`, `description`, `servings`, `time`, `isPublished`, and `userId` set to user B's ID
+*   **Then** the API returns `200`
+*   **And** the saved `userId` is user B's ID
 
 #### Scenario: Unauthenticated user accesses the dashboard
 *   **Given** I have no session in `localStorage`
 *   **When** I navigate to the dashboard
-*   **Then** I am redirected to the login page
+*   **Then** I remain on the recipes view
+*   **And** the **Add** button is not shown
 
 #### Scenario: Unauthenticated API request to recipes
 *   **Given** I have no valid session token
 *   **When** I request `GET /recipeapi/recipes`
-*   **Then** the API returns `401` with an unauthorized message
+*   **Then** the API returns `200` with the published recipe list
 
 ---
 
@@ -563,10 +556,10 @@ Each scenario above must map to at least one automated test.
 | US-3.2 | User has no recipes | `frontend/tests/RecipeList.test.js` | `it("User has no recipes")` |
 | US-3.2 | User cannot see another user's Recipe | `backend/tests/recipes.test.js`; `frontend/tests/RecipeList.test.js` | `it("User cannot see another user's Recipe")` |
 | US-3.3 | Edit a recipe | `frontend/tests/EditRecipe.test.js`; `frontend/tests/RecipeList.test.js` | `it("Edit a recipe")` |
-| US-3.3 | Delete a recipe | `frontend/tests/RecipeList.test.js` | `it("Delete a recipe")` |
+| US-3.3 | Delete a recipe | `backend/tests/recipes.test.js` | `it("Delete a recipe")` |
 | US-3.4 | User attempts to rename another user's recipe | `backend/tests/recipes.test.js` | `it("User attempts to rename another user's recipe")` |
 | US-3.4 | User attempts to delete another user's recipe | `backend/tests/recipes.test.js` | `it("User attempts to delete another user's recipe")` |
-| US-3.4 | Client cannot assign a recipe to another user on create | `backend/tests/recipes.test.js` | `it("Client cannot assign a recipe to another user on create")` |
+| US-3.4 | Create stores userId from the request body | `backend/tests/recipes.test.js` | `it("Create stores userId from the request body")` |
 | US-3.4 | Unauthenticated user accesses the dashboard | `frontend/tests/RecipeList.test.js` | `it("Unauthenticated user accesses the dashboard")` |
 | US-3.4 | Unauthenticated API request to recipes | `backend/tests/recipes.test.js` | `it("Unauthenticated API request to recipes")` |
 | US-3.5 | Add Ingredients to a recipe | `backend/tests/recipeIngredients.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Add Ingredients to a recipe")` |
