@@ -1,4 +1,4 @@
-# Feature: Todo List Management
+# Feature: Recipe Management
 
 **Feature ID:** 3
 **Branch pattern:** `feature/3-recipe-management`
@@ -123,29 +123,16 @@
 
 ## Data Ownership & Isolation
 
-Each user owns their lists exclusively. Another authenticated user must not be able to view, rename, or delete them.
+Each user owns their recipes exclusively. Another authenticated user must not be able to view, rename, delete, or change ingredients or steps on them. Recipe ingredients and recipe steps inherit the parent recipe’s owner; they have no independent owner.
 
 | Rule | Requirement |
 |------|-------------|
-| **Read scope** | `GET /recipeapi/recipes` returns only recipes where `userId = req.user.id`. |
-| **Write scope** | `PUT` and `DELETE` apply only when the recipe row matches both `id` and `req.user.id`. |
-| **Create scope** | New recipes are always owned by the authenticated user. |
-| **Cross-user access** | If a list belongs to another user, respond with `404` — never `403` (do not confirm the recipe exists). |
-| **UI scope** | The lists view shows only recipes returned by `GET /recipeapi/recipes` for the signed-in user. |
-| **Implementation** | Use a shared helper (e.g. `getAccessibleListOrNull(req, recipeId)`) in `app/authorization/` — do not duplicate scope logic in controllers. |
-
----
-
-## API Requirements
-
-| Method | Endpoint | Auth | Purpose |
-|--------|----------|------|---------|
-| `GET` | `/recipeapi/recipes` | Yes | Fetch all recipes for the authenticated user |
-| `POST` | `/recipeapi/recipes` | Yes | Create a new recipe |
-| `PUT` | `/recipeapi/recipes/:recipeId` | Yes | Rename a recipe |
-| `DELETE` | `/recipeapi/recipes/:recipeId` | Yes | Delete a recipe owned by the caller |
-
-All endpoints return **only data owned by the authenticated user**. Cross-user access attempts return `404`.
+| **Read scope** | `GET /recipeapi/recipes` returns only recipes where `userId = req.user.id`. `GET /recipeapi/recipes/:recipeId` and nested ingredient/step reads succeed only when the parent recipe’s `userId = req.user.id`. |
+| **Write scope** | `PUT` and `DELETE` on a recipe apply only when the row matches both `id` and `req.user.id`. Nested ingredient/step writes apply only when the parent recipe is owned by `req.user.id`. |
+| **Create scope** | New recipes are always owned by the authenticated user (`userId` from `req.user.id` only). Nested ingredient/step creates are allowed only on a recipe owned by the caller. |
+| **Cross-user access** | If a recipe belongs to another user, respond with `404` — never `403` (do not confirm the recipe exists). Same `404` for nested ingredient/step access under an unowned recipe. |
+| **UI scope** | The recipes view shows only recipes returned by `GET /recipeapi/recipes` for the signed-in user. The edit page shows only that user’s recipe, ingredients, and steps. |
+| **Implementation** | Use a shared helper (e.g. `getAccessibleRecipeOrNull(req, recipeId)`) in `app/authorization/` — do not duplicate scope logic in controllers. Nested controllers must resolve the parent recipe through that helper before reading or writing `recipeIngredient` or `recipeStep` rows. |
 
 ---
 
@@ -156,6 +143,197 @@ All endpoints return **only data owned by the authenticated user**. Cross-user a
 - **recipeStep**: A single step in a recipe; will contain a recipeIngredient.
 - **ingredient**: stand alone ingredient (from feature 2).
 - **User**: owns many lists (from Feature 1).
+
+---
+
+## API Requirements
+
+Mount prefix: `/recipeapi`. All endpoints below require a valid session (`Authorization: Bearer <token>`). Unauthenticated requests return `401` with an unauthorized message. Cross-user or missing recipe access returns `404` with `{ "message": "recipe with id=<id> not found." }` (do not use `403`). Errors use `{ "message": "…" }`. Responses are flat JSON (no `{ success, data }` envelope).
+
+Ingredient catalog reads used by the edit page (`GET /recipeapi/ingredients`) belong to Feature 2; this feature only attaches those ingredients to a recipe.
+
+| Method | Endpoint | Auth | Purpose |
+|--------|----------|------|---------|
+| `GET` | `/recipeapi/recipes` | Yes | Fetch all recipes for the authenticated user, ordered by `name` ascending |
+| `POST` | `/recipeapi/recipes` | Yes | Create a new recipe owned by the caller |
+| `GET` | `/recipeapi/recipes/:recipeId` | Yes | Fetch one owned recipe |
+| `PUT` | `/recipeapi/recipes/:recipeId` | Yes | Update an owned recipe (including rename) |
+| `DELETE` | `/recipeapi/recipes/:recipeId` | Yes | Delete a recipe owned by the caller |
+| `GET` | `/recipeapi/recipes/:recipeId/recipeIngredients` | Yes | List ingredients on an owned recipe |
+| `POST` | `/recipeapi/recipes/:recipeId/recipeIngredients` | Yes | Add an ingredient with quantity to an owned recipe |
+| `PUT` | `/recipeapi/recipes/:recipeId/recipeIngredients/:id` | Yes | Update a recipe ingredient (quantity and/or step association) on an owned recipe |
+| `DELETE` | `/recipeapi/recipes/:recipeId/recipeIngredients/:id` | Yes | Remove a recipe ingredient from an owned recipe |
+| `GET` | `/recipeapi/recipes/:recipeId/recipeSteps` | Yes | List steps for an owned recipe, ordered by `stepNumber` ascending |
+| `GET` | `/recipeapi/recipes/:recipeId/recipeStepsWithIngredients` | Yes | List steps for an owned recipe, including associated recipe ingredients |
+| `POST` | `/recipeapi/recipes/:recipeId/recipeSteps` | Yes | Add a step to an owned recipe |
+| `PUT` | `/recipeapi/recipes/:recipeId/recipeSteps/:id` | Yes | Update a step on an owned recipe |
+| `DELETE` | `/recipeapi/recipes/:recipeId/recipeSteps/:id` | Yes | Delete a step from an owned recipe |
+
+### Recipes
+
+**Create request body** (`POST /recipeapi/recipes`):
+
+```json
+{ "name": "Pie" }
+```
+
+`name` is required (trimmed; empty/whitespace rejected). The client may also send fields already on the recipe row: `description`, `servings`, `time`. Ignore or strip `userId` in the body (**FR-004**). Do not use a body `userId` to assign ownership.
+
+**Create success** (`201`):
+
+```json
+{
+  "id": 1,
+  "name": "Pie",
+  "description": "",
+  "servings": 2,
+  "time": 30,
+  "userId": 42
+}
+```
+
+`userId` in the response is the authenticated user, not a value from the request body.
+
+**List success** (`200`): array of recipe objects owned by the caller, sorted alphabetically by `name`.
+
+**Get one success** (`200`): one recipe object owned by the caller.
+
+**Update request body** (`PUT /recipeapi/recipes/:recipeId`):
+
+```json
+{ "name": "New Pie" }
+```
+
+The edit page may also send `description`, `servings`, and `time`. Ownership (`userId`) MUST NOT change.
+
+**Update / delete success** (`200`): recipe updated or removed. Delete removes the recipe so it no longer appears in `GET /recipeapi/recipes`.
+
+**Validation:** empty/whitespace `name` → `400`. `name` longer than 255 characters → `400`. Invalid `recipeId` → `400`. Unowned or missing recipe → `404` as quoted above.
+
+### Recipe ingredients
+
+**Create request body** (`POST /recipeapi/recipes/:recipeId/recipeIngredients`):
+
+```json
+{
+  "quantity": 1,
+  "recipeId": 1,
+  "ingredientId": 5
+}
+```
+
+`quantity` and `ingredientId` are required. `recipeStepId` may be omitted or `null` when the ingredient is attached to the recipe only (US-3.5). The path `:recipeId` must match an owned recipe; do not trust a body `recipeId` for a different recipe.
+
+**Create success** (`200`): the created `recipeIngredient` object (id, quantity, recipeId, recipeStepId, ingredientId).
+
+**List success** (`200`): array of recipe ingredients for that recipe, each including the related `ingredient` (name and unit from Feature 2).
+
+**Update request body** (`PUT /recipeapi/recipes/:recipeId/recipeIngredients/:id`):
+
+```json
+{
+  "quantity": 1,
+  "recipeId": 1,
+  "ingredientId": 5,
+  "recipeStepId": 3
+}
+```
+
+Used to change quantity (US-3.6) and to associate an existing recipe ingredient with a step (US-3.7).
+
+**Delete success** (`200`): the recipe ingredient is no longer on the recipe.
+
+### Recipe steps
+
+**Create request body** (`POST /recipeapi/recipes/:recipeId/recipeSteps`):
+
+```json
+{
+  "stepNumber": 1,
+  "instruction": "mix",
+  "recipeId": 1
+}
+```
+
+`stepNumber` and `instruction` are required. After create, the edit page may `PUT` recipe ingredients to set `recipeStepId` so the step lists those ingredients (US-3.7: step `mix` with ingredient `sugar`).
+
+**Create success** (`200`): the created `recipeStep` object (id, stepNumber, instruction, recipeId).
+
+**List with ingredients success** (`200`): steps for the recipe ordered by `stepNumber`, each including `recipeIngredient` rows and nested `ingredient`.
+
+**Update request body** (`PUT /recipeapi/recipes/:recipeId/recipeSteps/:id`):
+
+```json
+{
+  "stepNumber": 1,
+  "instruction": "mix in a bowl",
+  "recipeId": 1
+}
+```
+
+**Delete success** (`200`): the step is no longer on the recipe.
+
+---
+
+## Screen Requirements
+
+Follow [ui-style-system.mdc](../.cursor/rules/ui-style-system.mdc): `oc-cta` on primary labeled CTAs; icon-only actions need `aria-label`s. No sidebar/main split (**FR-007**, **FR-008**).
+
+App chrome (`MenuBar`) already includes **Recipes** (this view) and, when signed in, **Ingredients** (Feature 2). This feature does not add new chrome.
+
+### View: Recipes dashboard — route name `recipes`
+
+*   Path `/recipes`. Single-view recipes UI (existing `RecipeList.vue`; **FR-007** names this dashboard). Heading: **Recipes**.
+*   Primary action: **+ New Recipe** (`oc-cta`). Opens the add-recipe dialog.
+*   Body: a single list of the signed-in user’s recipes from `GET /recipeapi/recipes`. Each recipe shows its name plus **edit** and **delete** icon actions (`aria-label`: **Edit recipe**, **Delete recipe**).
+*   **Edit recipe** navigates to the edit page (`editRecipe`, `/recipe/:id`) (**FR-008**). After a rename on that page, returning to this view shows the new name in place of the old one.
+*   **Delete recipe** is a dialog-based action on this view (**FR-007**). After delete, the recipe disappears from the list.
+*   **Empty state:** **"No recipes yet. Create your first recipe."**
+*   **Loading:** progress/skeleton while `GET /recipeapi/recipes` is in flight.
+*   **Error:** `<v-alert type="error">` for failed loads or failed create/delete.
+*   **Unauthenticated:** no session in `localStorage` → redirect to the login page (route `login`).
+
+**Add Recipe dialog** (persistent)
+
+*   Title: **Add Recipe**
+*   Required field: **Name**. Client validation: empty or whitespace-only name blocks submit, shows **"recipe name is required."**, and sends no API request.
+*   Existing recipe fields also on this dialog (data model / current UI): **Number of Servings**, **Time to Make (in minutes)**, **Description**.
+*   Actions: **Close** (dismiss, no create); confirm **Add Recipe** (calls `POST /recipeapi/recipes`).
+*   On `201`, `Pie` (or the entered name) appears in the recipes view and the dialog closes.
+
+### View: Edit Recipe — route name `editRecipe`
+
+*   Path `/recipe/:id` (`EditRecipe.vue`). Single-view editor (**FR-008**). Heading: **Edit Recipe**.
+*   Loads the owned recipe (`GET /recipeapi/recipes/:recipeId`), its recipe ingredients, and its steps with ingredients. Unowned/missing recipe follows API `404`; unauthenticated follows **FR-001** / login redirect.
+*   Recipe fields: **Name** (required; same trim/empty rules as create), **Number of Servings**, **Time to Make (in minutes)**, **Description**.
+*   Primary save: **Update Recipe** (`oc-cta`) → `PUT /recipeapi/recipes/:recipeId`.
+*   **Error:** `<v-alert type="error">` for failed load or save.
+
+**Ingredients** (on this page)
+
+*   Section heading: **Ingredients**. Primary action: **Add** opens the ingredient dialog.
+*   Each recipe ingredient shows quantity and ingredient name, with icon actions **Edit** and **Delete** (`aria-label`: **Edit ingredient**, **Delete ingredient**).
+*   Delete removes that ingredient from the recipe immediately (US-3.6).
+
+**Add / Edit Ingredient dialog** (persistent)
+
+*   Title: **Add Ingredient** or **Edit Ingredient**.
+*   Fields: **Quantity** (number, required); **Ingredients** select from Feature 2 catalog (required).
+*   Actions: **Close**; confirm **Add Ingredient** or **Update Ingredient**.
+*   Add calls `POST /recipeapi/recipes/:recipeId/recipeIngredients` with quantity and selected `ingredientId`. Edit saves quantity (US-3.6).
+
+**Steps** (on this page)
+
+*   Section heading: **Steps**. Primary action: **Add** opens the step dialog.
+*   Each step shows `stepNumber`, instruction, associated ingredient names, and icon actions **Edit** and **Delete** (`aria-label`: **Edit step**, **Delete step**).
+*   Delete removes that step from the recipe (US-3.8).
+
+**Add / Edit Step dialog** (persistent)
+
+*   Title: **Add Step** or **Edit Step**.
+*   Fields: **Number** (`stepNumber`, required); **Instruction** (required; Gherkin “step named `mix`” / “description” maps to this field); **Ingredients** multi-select of this recipe’s recipe ingredients (so a step can include `sugar`).
+*   Actions: **Close**; confirm **Add Step** or **Update Step**.
+*   Add calls `POST /recipeapi/recipes/:recipeId/recipeSteps`, then associates selected recipe ingredients with the new step. Edit updates `instruction` (US-3.8: `mix in a bowl`).
 
 ---
 
@@ -179,7 +357,7 @@ All endpoints return **only data owned by the authenticated user**. Cross-user a
 |-------|------|-------|
 | `id` | INTEGER PK | Auto-increment |
 | `quantity` | FLOAT | Required;|
-| `recipeStepId` | INTEGER FK | Required;  |
+| `recipeStepId` | INTEGER FK |   |
 | `recipeId` | INTEGER FK | Required;  |
 | `ingredientId` | INTEGER FK | Required;  |
 | `createdAt` | DATE | Sequelize timestamps |
@@ -246,7 +424,7 @@ All endpoints return **only data owned by the authenticated user**. Cross-user a
 *   **Given** I am signed in
 *   **And** I have no recipes
 *   **When** I navigate to the dashboard
-*   **Then** I see **"No recipes yet. Create your first recipe."**
+*   **Then** I see an empty list with the add recipe button visible
 
 #### Scenario: User cannot see another user's Recipe
 *   **Given** user B owns list `Secret Recipe`
@@ -372,3 +550,69 @@ All endpoints return **only data owned by the authenticated user**. Cross-user a
 *   **Then** the step `mix` is no longer on the recipe.
 
 ---
+
+## Test Coverage Map
+
+Each scenario above must map to at least one automated test.
+
+| Story | Scenario | Test file | Test name |
+|-------|----------|-----------|-----------|
+| US-3.1 | User creates a new recipe | `backend/tests/recipes.test.js`; `frontend/tests/RecipeList.test.js` | `it("User creates a new recipe")` |
+| US-3.1 | User creates a recipe with an empty name | `frontend/tests/RecipeList.test.js` | `it("User creates a recipe with an empty name")` |
+| US-3.2 | Dashboard loads with existing recipes | `frontend/tests/RecipeList.test.js` | `it("Dashboard loads with existing recipes")` |
+| US-3.2 | User has no recipes | `frontend/tests/RecipeList.test.js` | `it("User has no recipes")` |
+| US-3.2 | User cannot see another user's Recipe | `backend/tests/recipes.test.js`; `frontend/tests/RecipeList.test.js` | `it("User cannot see another user's Recipe")` |
+| US-3.3 | Edit a recipe | `frontend/tests/EditRecipe.test.js`; `frontend/tests/RecipeList.test.js` | `it("Edit a recipe")` |
+| US-3.3 | Delete a recipe | `frontend/tests/RecipeList.test.js` | `it("Delete a recipe")` |
+| US-3.4 | User attempts to rename another user's recipe | `backend/tests/recipes.test.js` | `it("User attempts to rename another user's recipe")` |
+| US-3.4 | User attempts to delete another user's recipe | `backend/tests/recipes.test.js` | `it("User attempts to delete another user's recipe")` |
+| US-3.4 | Client cannot assign a recipe to another user on create | `backend/tests/recipes.test.js` | `it("Client cannot assign a recipe to another user on create")` |
+| US-3.4 | Unauthenticated user accesses the dashboard | `frontend/tests/RecipeList.test.js` | `it("Unauthenticated user accesses the dashboard")` |
+| US-3.4 | Unauthenticated API request to recipes | `backend/tests/recipes.test.js` | `it("Unauthenticated API request to recipes")` |
+| US-3.5 | Add Ingredients to a recipe | `backend/tests/recipeIngredients.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Add Ingredients to a recipe")` |
+| US-3.6 | Edit Ingredients to a recipe | `backend/tests/recipeIngredients.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Edit Ingredients to a recipe")` |
+| US-3.6 | Delete Ingredients to a recipe | `backend/tests/recipeIngredients.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Delete Ingredients to a recipe")` |
+| US-3.7 | Add Steps to a recipe | `backend/tests/recipeSteps.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Add Steps to a recipe")` |
+| US-3.8 | Edit Step on a recipe | `backend/tests/recipeSteps.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Edit Step on a recipe")` |
+| US-3.8 | Delete Step from a recipe | `backend/tests/recipeSteps.test.js`; `frontend/tests/EditRecipe.test.js` | `it("Delete Step from a recipe")` |
+
+---
+
+## Agent implementation request
+
+Copy when asking Cursor to implement this feature (`@` this file):
+
+```text
+Implement Feature 3 from @features/feature-3-recipe-management.md on branch `feature/3-recipe-management`.
+
+Follow layer order in @features/framework.md (models → routes → backend tests → frontend → frontend tests).
+Map every Gherkin scenario in the Test Coverage Map; run `npm test` before finishing.
+If API routes, payloads, schema, or product rules changed per this spec, update @features/reference/api.md, @features/reference/data-model.md, and/or @features/reference/behavior.md in the same PR to match shipped code.
+Complete Definition of Done and the merge checklist in @features/framework.md.
+Do not implement behavior not in this spec.
+```
+
+**Reference updates for this feature:** `features/reference/api.md`, `features/reference/data-model.md`, `features/reference/behavior.md`
+
+---
+
+## Definition of Done
+
+*   [ ] Backend and frontend implemented per this spec (**FR-001**–**FR-008** satisfied)
+*   [ ] **Success Criteria (SC-001**–**SC-003)** met
+*   [ ] All mapped tests pass (`npm test`)
+*   [ ] Test Coverage Map complete
+*   [ ] `features/reference/data-model.md` updated (if schema changed)
+*   [ ] `features/reference/api.md` updated (if API changed)
+*   [ ] `features/reference/behavior.md` updated (if product rules changed)
+
+---
+
+## Out of Scope
+
+*   User authentication, registration, session, and login UI ([Feature 1](./feature-1-user-auth.md))
+*   Ingredient catalog CRUD ([Feature 2](./feature-2-ingredient-management.md))
+*   Publishing recipes and a public/published recipe catalog (Feature 4 — called out in US-3.4)
+*   PDF / print export of a recipe (present on recipe cards in the current UI; not in this feature’s FRs or Gherkin)
+*   Bulk delete endpoints (`DELETE /recipeapi/recipes`, `DELETE /recipeapi/recipeSteps`, `DELETE /recipeapi/recipeIngredients`)
+*   Sharing, comments, ratings, or changing recipe ownership after create
