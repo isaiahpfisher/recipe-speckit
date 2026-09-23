@@ -24,9 +24,9 @@ exports.create = (req, res) => {
     error.statusCode = 400;
     throw error;
   } else if (req.body.isPublished === undefined) {
-    const error = new Error("Is Published cannot be empty for recipe!");
-    error.statusCode = 400;
-    throw error;
+    return res.status(400).send({
+      message: "Is Published cannot be empty for recipe!",
+    });
   } else if (req.body.userId === undefined) {
     const error = new Error("User Id cannot be empty for recipe!");
     error.statusCode = 400;

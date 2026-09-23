@@ -309,3 +309,22 @@ describe("Feature 1 — User Authentication and Session Management", () => {
     });
   });
 });
+
+describe("Feature 4 — Recipe Publishing", () => {
+  describe("US-4.1 — See Published Recipes", () => {
+    it("Guest views published recipes", async () => {
+      localStorage.clear();
+      vi.clearAllMocks();
+      RecipeServices.getRecipes.mockResolvedValue({
+        data: [{ id: 1, name: "Published Soup" }],
+      });
+
+      const { wrapper, router } = await mountRoute();
+      await clickByText(wrapper, "View Published Recipes");
+      await flushPromises();
+
+      expect(router.push).toHaveBeenCalledWith({ name: "recipes" });
+      wrapper.unmount();
+    });
+  });
+});
