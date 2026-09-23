@@ -208,6 +208,7 @@ For this course, **you** write the requirements half and the **data model**. You
 | ID | File | Branch | Depends on |
 |----|------|--------|------------|
 | 2 | feature-2-ingredient-management | `feature/2-ingredient-management` | Feature 1 |
+| 4 | feature-4-recipe-publishing | `feature/4-recipe-publishing` | Feature 1 |
 
 New features: you own requirements + data model; Cursor helps with the remaining design sections. Still follow [features/framework.md](features/framework.md#feature-spec-template) for the overall shape of the file.
 
