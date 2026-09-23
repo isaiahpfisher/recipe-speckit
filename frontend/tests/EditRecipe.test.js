@@ -1,6 +1,9 @@
 /**
  * Feature 3 — Recipe Management
  * Spec: features/feature-3-recipe-management.md
+ *
+ * Feature 4 — Recipe Publishing
+ * Spec: features/feature-4-recipe-publishing.md
  */
 
 import { flushPromises, mount } from "@vue/test-utils";
@@ -432,6 +435,83 @@ describe("Feature 3 — Recipe Management", () => {
 
       expect(RecipeStepServices.deleteRecipeStep).toHaveBeenCalled();
       expect(wrapper.text()).not.toContain("mix");
+    });
+  });
+});
+
+describe("Feature 4 — Recipe Publishing", () => {
+  let wrapper;
+
+  beforeEach(() => {
+    localStorage.setItem(
+      "user",
+      JSON.stringify({
+        id: 1,
+        firstName: "Ada",
+        lastName: "Owner",
+        email: "ada@example.com",
+        token: "test-token",
+      })
+    );
+    vi.clearAllMocks();
+
+    RecipeServices.getRecipe.mockResolvedValue({
+      data: [{ ...pieRecipe, isPublished: true }],
+    });
+    RecipeServices.updateRecipe.mockResolvedValue({
+      status: 200,
+      data: { message: "Recipe was updated successfully." },
+    });
+    IngredientServices.getIngredients.mockResolvedValue({
+      data: [sugarIngredient],
+    });
+    RecipeIngredientServices.getRecipeIngredientsForRecipe.mockResolvedValue({
+      data: [],
+    });
+    RecipeStepServices.getRecipeStepsForRecipeWithIngredients.mockResolvedValue({
+      data: [],
+    });
+  });
+
+  afterEach(() => {
+    if (wrapper) {
+      wrapper.unmount();
+      wrapper = undefined;
+    }
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  describe("US-4.3 — Unpublish Recipe", () => {
+    it("Owner unpublishes a recipe", async () => {
+      const router = await makeRouter();
+      wrapper = mount(EditRecipe, {
+        global: {
+          plugins: [vuetify(), router],
+          stubs: { VDialog: dialogStub() },
+        },
+      });
+      await flushPromises();
+      await nextTick();
+
+      const publishSwitch = wrapper
+        .findAllComponents({ name: "VSwitch" })
+        .find((field) => String(field.props("label") || "").includes("Publish?"));
+      expect(publishSwitch).toBeTruthy();
+      expect(String(publishSwitch.props("label"))).toContain("Yes");
+
+      await publishSwitch.setValue(false);
+      await nextTick();
+
+      const save = buttonByText(wrapper, "Update Recipe");
+      expect(save).toBeTruthy();
+      await save.trigger("click");
+      await flushPromises();
+      await nextTick();
+
+      expect(RecipeServices.updateRecipe).toHaveBeenCalled();
+      const [, payload] = RecipeServices.updateRecipe.mock.calls[0];
+      expect(payload.isPublished).toBe(false);
     });
   });
 });

@@ -1,6 +1,9 @@
 /**
  * Feature 1 — User Authentication and Session Management
  * Spec: features/feature-1-user-authentication-session-management.md
+ *
+ * Feature 4 — Recipe Publishing
+ * Spec: features/feature-4-recipe-publishing.md
  */
 
 import { mount, flushPromises } from "@vue/test-utils";
@@ -304,6 +307,36 @@ describe("Feature 1 — User Authentication and Session Management", () => {
       expect(RecipeServices.getRecipes).toHaveBeenCalled();
       expect(RecipeServices.getRecipesByUserId).not.toHaveBeenCalled();
       expect(list.wrapper.text()).toContain("Published Soup");
+      expect(list.router.currentRoute.value.name).toBe("recipes");
+      list.wrapper.unmount();
+    });
+  });
+});
+
+describe("Feature 4 — Recipe Publishing", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    RecipeServices.getRecipes.mockResolvedValue({
+      data: [{ id: 1, name: "Recipe", description: "Food", servings: 2, time: 30, isPublished: true }],
+    });
+    RecipeServices.getRecipesByUserId.mockResolvedValue({ data: [] });
+  });
+
+  describe("US-4.1 — See Published Recipes", () => {
+    it("Guest views published recipes", async () => {
+      const { wrapper, router } = await mountRoute();
+      await clickByText(wrapper, "View Published Recipes");
+      await flushPromises();
+
+      expect(router.push).toHaveBeenCalledWith({ name: "recipes" });
+      wrapper.unmount();
+
+      const list = await mountWithPlugins(RecipeList, "/recipes");
+      expect(RecipeServices.getRecipes).toHaveBeenCalled();
+      expect(RecipeServices.getRecipesByUserId).not.toHaveBeenCalled();
+      expect(list.wrapper.text()).toContain("Recipes");
+      expect(list.wrapper.text()).toContain("Recipe");
       expect(list.router.currentRoute.value.name).toBe("recipes");
       list.wrapper.unmount();
     });
