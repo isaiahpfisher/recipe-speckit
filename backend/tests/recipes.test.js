@@ -1,6 +1,9 @@
 /**
  * Feature 3 — Recipe Management
  * Spec: features/feature-3-recipe-management.md
+ *
+ * Feature 4 — Recipe Publishing
+ * Spec: features/feature-4-recipe-publishing.md
  */
 
 const request = require("supertest");
@@ -203,6 +206,231 @@ describe("Feature 3 — Recipe Management", () => {
       const names = res.body.map((recipe) => recipe.name);
       expect(names).toContain("Public Pie");
       expect(names).not.toContain("Secret Recipe");
+    });
+  });
+});
+
+describe("Feature 4 — Recipe Publishing", () => {
+  let userA;
+  let userB;
+  let tokenA;
+  let tokenB;
+
+  beforeAll(async () => {
+    await ensureTestDatabase();
+    await db.sequelize.sync({ force: true });
+  });
+
+  beforeEach(async () => {
+    await db.recipeIngredient.destroy({ where: {} });
+    await db.recipeStep.destroy({ where: {} });
+    await db.recipe.destroy({ where: {} });
+    await db.session.destroy({ where: {} });
+    await db.user.destroy({ where: {} });
+
+    ({ user: userA, token: tokenA } = await createUserWithToken({
+      firstName: "Ada",
+      lastName: "Owner",
+      email: "ada-publish@example.com",
+      password: "password123",
+    }));
+    ({ user: userB, token: tokenB } = await createUserWithToken({
+      firstName: "Bea",
+      lastName: "Other",
+      email: "bea-publish@example.com",
+      password: "password123",
+    }));
+  });
+
+  describe("US-4.1 — See Published Recipes", () => {
+    it("Guest views published recipes", async () => {
+      await createRecipe(userA.id, "Recipe", {
+        description: "Food",
+        servings: 2,
+        time: 30,
+        isPublished: true,
+      });
+
+      const res = await request(app).get("/recipeapi/recipes/");
+
+      expect(res.status).toBe(200);
+      expect(res.body.map((recipe) => recipe.name)).toContain("Recipe");
+      expect(
+        res.body.every(
+          (recipe) => recipe.isPublished === true || recipe.isPublished === 1
+        )
+      ).toBe(true);
+    });
+
+    it("No published recipes", async () => {
+      await createRecipe(userA.id, "Hidden Stew", { isPublished: false });
+
+      const res = await request(app).get("/recipeapi/recipes/");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("Unpublished recipes stay off the guest list", async () => {
+      await createRecipe(userA.id, "Recipe", {
+        description: "Food",
+        isPublished: true,
+      });
+      await createRecipe(userB.id, "Secret Recipe", { isPublished: false });
+
+      const res = await request(app).get("/recipeapi/recipes/");
+
+      expect(res.status).toBe(200);
+      const names = res.body.map((recipe) => recipe.name);
+      expect(names).toContain("Recipe");
+      expect(names).not.toContain("Secret Recipe");
+    });
+  });
+
+  describe("US-4.2 — Publish Recipe", () => {
+    it("Owner publishes a recipe", async () => {
+      const recipe = await createRecipe(userA.id, "Recipe", {
+        description: "Food",
+        servings: 2,
+        time: 30,
+        isPublished: false,
+      });
+
+      const res = await request(app)
+        .put(`/recipeapi/recipes/${recipe.id}`)
+        .set("Authorization", `Bearer ${tokenA}`)
+        .send({ isPublished: true });
+
+      expect(res.status).toBe(200);
+
+      const guestList = await request(app).get("/recipeapi/recipes/");
+      expect(guestList.status).toBe(200);
+      expect(guestList.body.map((row) => row.name)).toContain("Recipe");
+    });
+
+    it("Cannot publish without signing in", async () => {
+      const recipe = await createRecipe(userA.id, "Owned Recipe", {
+        isPublished: false,
+      });
+
+      const createRes = await request(app)
+        .post("/recipeapi/recipes/")
+        .send(recipeBody(userA.id, "Unauthorized Publish", { isPublished: true }));
+
+      expect(createRes.status).toBe(401);
+      expect(createRes.body).toEqual({
+        message: "Unauthorized! No Auth Header",
+      });
+
+      const updateRes = await request(app)
+        .put(`/recipeapi/recipes/${recipe.id}`)
+        .send({ isPublished: true });
+
+      expect(updateRes.status).toBe(401);
+      expect(updateRes.body).toEqual({
+        message: "Unauthorized! No Auth Header",
+      });
+
+      const unchanged = await db.recipe.findByPk(recipe.id);
+      expect(unchanged.isPublished).toBeFalsy();
+      expect(
+        await db.recipe.findOne({ where: { name: "Unauthorized Publish" } })
+      ).toBeNull();
+    });
+
+    it("Cannot publish another user’s recipe", async () => {
+      const otherRecipe = await createRecipe(userB.id, "Bea's Recipe", {
+        isPublished: false,
+      });
+
+      const res = await request(app)
+        .put(`/recipeapi/recipes/${otherRecipe.id}`)
+        .set("Authorization", `Bearer ${tokenA}`)
+        .send({ isPublished: true });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({
+        message: `Cannot find Recipe with id=${otherRecipe.id}.`,
+      });
+
+      const unchanged = await db.recipe.findByPk(otherRecipe.id);
+      expect(unchanged.isPublished).toBeFalsy();
+    });
+
+    it("Cannot create a recipe with isPublished omitted", async () => {
+      const res = await request(app)
+        .post("/recipeapi/recipes/")
+        .set("Authorization", `Bearer ${tokenA}`)
+        .send({
+          name: "Recipe",
+          description: "Food",
+          servings: 2,
+          time: 30,
+          userId: userA.id,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.text).toContain("Is Published cannot be empty for recipe!");
+    });
+  });
+
+  describe("US-4.3 — Unpublish Recipe", () => {
+    it("Owner unpublishes a recipe", async () => {
+      const recipe = await createRecipe(userA.id, "Recipe", {
+        description: "Food",
+        isPublished: true,
+      });
+
+      const res = await request(app)
+        .put(`/recipeapi/recipes/${recipe.id}`)
+        .set("Authorization", `Bearer ${tokenA}`)
+        .send({ isPublished: false });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        message: "Recipe was updated successfully.",
+      });
+
+      const guestList = await request(app).get("/recipeapi/recipes/");
+      expect(guestList.status).toBe(200);
+      expect(guestList.body.map((row) => row.name)).not.toContain("Recipe");
+    });
+
+    it("Cannot unpublish without signing in", async () => {
+      const recipe = await createRecipe(userA.id, "Recipe", {
+        isPublished: true,
+      });
+
+      const res = await request(app)
+        .put(`/recipeapi/recipes/${recipe.id}`)
+        .send({ isPublished: false });
+
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({
+        message: "Unauthorized! No Auth Header",
+      });
+
+      const unchanged = await db.recipe.findByPk(recipe.id);
+      expect(unchanged.isPublished).toBeTruthy();
+    });
+
+    it("Cannot unpublish another user’s recipe", async () => {
+      const otherRecipe = await createRecipe(userB.id, "Bea's Recipe", {
+        isPublished: true,
+      });
+
+      const res = await request(app)
+        .put(`/recipeapi/recipes/${otherRecipe.id}`)
+        .set("Authorization", `Bearer ${tokenA}`)
+        .send({ isPublished: false });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({
+        message: `Cannot find Recipe with id=${otherRecipe.id}.`,
+      });
+
+      const unchanged = await db.recipe.findByPk(otherRecipe.id);
+      expect(unchanged.isPublished).toBeTruthy();
     });
   });
 });
