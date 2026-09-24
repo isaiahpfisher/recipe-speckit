@@ -1,6 +1,9 @@
 /**
  * Feature 3 — Recipe Management
  * Spec: features/feature-3-recipe-management.md
+ *
+ * Feature 4 — Recipe Publishing
+ * Spec: features/feature-4-recipe-publishing.md
  */
 
 import { flushPromises, mount } from "@vue/test-utils";
@@ -10,6 +13,7 @@ import { createVuetify } from "vuetify";
 import * as components from "vuetify/components";
 import * as directives from "vuetify/directives";
 import RecipeList from "../src/views/RecipeList.vue";
+import RecipeCard from "../src/components/RecipeCardComponent.vue";
 import RecipeServices from "../src/services/RecipeServices.js";
 
 vi.mock("../src/services/RecipeServices.js", () => ({
@@ -270,6 +274,193 @@ describe("Feature 3 — Recipe Management", () => {
 
       expect(router.currentRoute.value.name).toBe("recipes");
       expect(buttonByText(wrapper, "Add")).toBeFalsy();
+    });
+  });
+});
+
+const publishedRecipe = {
+  id: 1,
+  name: "Recipe",
+  description: "Food",
+  servings: 2,
+  time: 30,
+  isPublished: true,
+  userId: 1,
+};
+
+function visibleHeadings(wrapper) {
+  return wrapper
+    .findAll("h3")
+    .filter((heading) => heading.isVisible())
+    .map((heading) => heading.text().trim());
+}
+
+function visibleTableHeaders(wrapper) {
+  return wrapper
+    .findAll("th")
+    .filter((header) => header.isVisible())
+    .map((header) => header.text().trim());
+}
+
+describe("Feature 4 — Recipe Publishing", () => {
+  let wrapper;
+  let router;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    RecipeServices.getRecipes.mockResolvedValue({ data: [publishedRecipe] });
+    RecipeServices.getRecipesByUserId.mockResolvedValue({ data: [] });
+    RecipeServices.addRecipe.mockResolvedValue({
+      status: 200,
+      data: { ...publishedRecipe },
+    });
+  });
+
+  afterEach(() => {
+    if (wrapper) {
+      wrapper.unmount();
+      wrapper = undefined;
+    }
+    document.body.innerHTML = "";
+  });
+
+  describe("US-4.1 — See Published Recipes", () => {
+    it("Guest views published recipes", async () => {
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      expect(wrapper.text()).toContain("Recipes");
+      expect(wrapper.text()).toContain("Recipe");
+      expect(RecipeServices.getRecipes).toHaveBeenCalled();
+      expect(RecipeServices.getRecipesByUserId).not.toHaveBeenCalled();
+      expect(buttonByText(wrapper, "Add")).toBeFalsy();
+    });
+
+    it("Published recipe card shows name, servings, time, and description", async () => {
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      expect(wrapper.text()).toContain("Recipe");
+      expect(wrapper.text()).toContain("2 Servings");
+      expect(wrapper.text()).toContain("30 minutes");
+      expect(wrapper.text()).toContain("Food");
+    });
+
+    it("Guest expands a published recipe", async () => {
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      const card = wrapper.findComponent(RecipeCard);
+      expect(card.exists()).toBe(true);
+      await card.trigger("click");
+      await nextTick();
+
+      expect(visibleHeadings(wrapper)).toEqual(
+        expect.arrayContaining(["Ingredients", "Recipe Steps"])
+      );
+      expect(visibleTableHeaders(wrapper)).toEqual(
+        expect.arrayContaining(["Step", "Instruction", "Ingredients"])
+      );
+    });
+
+    it("Guest collapses an expanded published recipe", async () => {
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      const card = wrapper.findComponent(RecipeCard);
+      const cardRoot = card.find(".v-card");
+      await cardRoot.trigger("click");
+      await nextTick();
+      expect(visibleHeadings(wrapper)).toEqual(
+        expect.arrayContaining(["Ingredients", "Recipe Steps"])
+      );
+      expect(card.vm.$.setupState.showDetails).toBe(true);
+
+      await cardRoot.trigger("click");
+      await nextTick();
+      await flushPromises();
+
+      expect(card.vm.$.setupState.showDetails).toBe(false);
+      const details = card.find(".pt-0");
+      expect(
+        details.exists() === false ||
+          details.isVisible() === false ||
+          details.element.style.display === "none"
+      ).toBe(true);
+    });
+
+    it("No published recipes", async () => {
+      RecipeServices.getRecipes.mockResolvedValue({ data: [] });
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      expect(wrapper.findComponent(RecipeCard).exists()).toBe(false);
+      expect(wrapper.text()).toContain("Recipes");
+      expect(wrapper.vm.snackbar.value).toBe(false);
+    });
+
+    it("Unpublished recipes stay off the guest list", async () => {
+      RecipeServices.getRecipes.mockResolvedValue({ data: [publishedRecipe] });
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      expect(wrapper.text()).toContain("Recipe");
+      expect(wrapper.text()).not.toContain("Secret Recipe");
+    });
+  });
+
+  describe("US-4.2 — Publish Recipe", () => {
+    it("Owner publishes a recipe", async () => {
+      localStorage.setItem("user", JSON.stringify(sessionUser));
+      RecipeServices.getRecipesByUserId.mockResolvedValue({ data: [] });
+      router = await makeRouter();
+      wrapper = await mountRecipes(router);
+
+      const openAdd = buttonByText(wrapper, "Add");
+      expect(openAdd).toBeTruthy();
+      await openAdd.trigger("click");
+      await nextTick();
+
+      const nameInput = wrapper
+        .findAllComponents({ name: "VTextField" })
+        .find((field) => field.props("label") === "Name")
+        .find("input");
+      await nameInput.setValue("Recipe");
+
+      const publishSwitch = wrapper
+        .findAllComponents({ name: "VSwitch" })
+        .find((field) => String(field.props("label") || "").includes("Publish?"));
+      expect(publishSwitch).toBeTruthy();
+      await publishSwitch.setValue(true);
+      await nextTick();
+
+      RecipeServices.addRecipe.mockImplementation(async (payload) => {
+        RecipeServices.getRecipesByUserId.mockResolvedValue({
+          data: [{ ...publishedRecipe, ...payload, id: 1 }],
+        });
+        return { status: 200, data: { ...publishedRecipe, ...payload, id: 1 } };
+      });
+
+      const confirm = buttonByText(wrapper, "Add Recipe");
+      await confirm.trigger("click");
+      await flushPromises();
+      await nextTick();
+
+      expect(RecipeServices.addRecipe).toHaveBeenCalled();
+      const sent = RecipeServices.addRecipe.mock.calls[0][0];
+      expect(sent.isPublished).toBe(true);
+      expect(sent.name).toBe("Recipe");
+
+      wrapper.unmount();
+      localStorage.clear();
+      RecipeServices.getRecipes.mockResolvedValue({
+        data: [{ ...publishedRecipe, isPublished: true }],
+      });
+      wrapper = await mountRecipes(router);
+
+      expect(wrapper.text()).toContain("Recipe");
+      expect(RecipeServices.getRecipes).toHaveBeenCalled();
     });
   });
 });
