@@ -102,7 +102,7 @@ async function mountRoute(initial = "/") {
       global: {
         plugins: [router, vuetify()],
       },
-    }
+    },
   );
   await flushPromises();
   return { wrapper, router };
@@ -120,9 +120,7 @@ async function mountWithPlugins(component, initial = "/") {
 }
 
 function clickByText(wrapper, label) {
-  const button = wrapper
-    .findAll("button")
-    .find((btn) => btn.text().replace(/\s+/g, " ").trim().includes(label));
+  const button = wrapper.findAll("button").find((btn) => btn.text().replace(/\s+/g, " ").trim().includes(label));
   expect(button, `button "${label}"`).toBeTruthy();
   return button.trigger("click");
 }
